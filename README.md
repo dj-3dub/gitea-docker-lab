@@ -1,278 +1,126 @@
-# Infrastructure Project Template
+# Gitea Docker Lab
 
-A standardized, production-ready template for building infrastructure and homelab projects with Docker, Make, Ansible, Terraform, and GitHub Actions.
+A self-hosted [Gitea](https://about.gitea.com/) Git server with PostgreSQL. **Terraform builds the whole stack** (images, network, volumes and containers) through the Docker provider, and a Makefile drives everything. Backup and restore are tested in CI.
 
-This template provides a repeatable project structure, operational tooling, and automation so every infrastructure project starts from the same foundation.
+```bash
+make install   # once per machine (Debian/Ubuntu)
+make build     # bootstrap → validate → terraform apply → admin user → health check
+```
+
+Terraform does **not** need to be installed. If it is missing, every Terraform step runs in the `hashicorp/terraform` container automatically.
+
+![Gitea repository view](docs/screenshots/gitea-repository.png)
 
 ---
 
-## Why This Template Exists
+## What you get
 
-Infrastructure projects often evolve organically, resulting in inconsistent repository layouts, duplicated scripts, and different operational workflows.
+| Component | Details |
+|---|---|
+| Gitea | `docker.gitea.com/gitea:1.27.3`. Web UI on `:3000`, Git over SSH on `:2222` |
+| PostgreSQL | `postgres:17-alpine`. Gitea is only created after the database is healthy |
+| Terraform | `terraform/`, `kreuzwerker/docker` provider. Runs locally or in a container (`TF_MODE`) |
+| Backups | `pg_dump` + data volume archive + `.env` + Terraform state, with checksums and retention |
+| Health | Containers, HTTP, SSH, **Terraform drift**, backup age, disk |
+| Ansible | Deploys the lab to remote hosts (Terraform then runs on each host) |
+| CI | ShellCheck, yamllint, Terraform, Ansible, then a real build, backup, restore and drift check |
 
-This template establishes a consistent engineering standard by providing:
-
-* A repeatable repository structure
-* Automated installation and bootstrapping
-* Project validation
-* Infrastructure-as-Code scaffolding
-* Deployment automation
-* Health checks
-* Backup and restore framework
-* GitHub Actions continuous validation
-
-The goal is simple:
-
-> Every infrastructure project should behave the same way regardless of the application it deploys.
+<p>
+  <img src="docs/screenshots/terminal-make-up.png" width="49%" alt="make up runs terraform apply">
+  <img src="docs/screenshots/terminal-make-health.png" width="49%" alt="make health output">
+</p>
 
 ---
 
-# Features
+## Quick start
 
-* Docker Compose project layout
-* Universal Makefile
-* Installation and bootstrap automation
-* Project validation framework
-* Health check framework
-* Backup and restore framework
-* Ansible deployment scaffold
-* Terraform scaffold
-* GitHub Actions validation
-* Documentation templates
-* Versioned project releases
+```bash
+git clone <this repo> gitea-lab && cd gitea-lab
+make install        # Docker, Ansible, linters, Terraform (INSTALL_TERRAFORM=0 to skip it)
+make build
+```
+
+Open <http://localhost:3000> and sign in as `GITEA_ADMIN_USER` with the `GITEA_ADMIN_PASSWORD` that `make bootstrap` generated in `.env`.
+
+### How Terraform is used
+
+`.env` is the only file you edit. [`scripts/tf.sh`](scripts/tf.sh) passes its values to Terraform as `TF_VAR_*` variables and runs Terraform in one of three modes:
+
+```bash
+make up                   # local terraform if installed, else the container
+make up TF_MODE=docker    # always use hashicorp/terraform:${TERRAFORM_VERSION}
+make up TF_MODE=local     # require a local install
+make diag                 # shows which runner is in use
+```
+
+In container mode the Docker socket is mounted, and Terraform runs as your user, so both modes read and write the same `terraform/terraform.tfstate`. CI checks this: after a local apply, the container's `plan` must report no changes.
+
+| Target | Terraform action |
+|---|---|
+| `make up` | `apply -auto-approve`: create or update everything and wait for health checks |
+| `make apply` | Same as `up`, but shows the plan and asks first |
+| `make plan` | Preview changes, e.g. after bumping `GITEA_VERSION` in `.env` |
+| `make down` | `apply -var running=false`: remove the containers but **keep the data volumes** |
+| `make nuke` | `destroy`: everything, including the data volumes (asks for confirmation) |
 
 ---
 
-# Repository Structure
+## Screenshots
 
-```text
-.
-├── ansible/
-├── backups/
-├── docs/
-├── monitoring/
-├── scripts/
-├── terraform/
-├── .github/
-├── docker-compose.yml
-├── Makefile
-├── README.md
-└── VERSION
-```
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/gitea-dashboard.png) | ![Issues](docs/screenshots/gitea-issues.png) |
+| Dashboard | Issues with labels |
+| ![Pull request](docs/screenshots/gitea-pull-request.png) | ![Dark theme](docs/screenshots/gitea-repository-dark.png) |
+| Pull request | Dark theme (follows your OS setting) |
+| ![make help](docs/screenshots/terminal-make-help.png) | ![make backup](docs/screenshots/terminal-make-backup.png) |
+| `make help` | `make backup` |
+
+More in [docs/screenshots](docs/screenshots).
 
 ---
 
-# Quick Start
+## Make targets
 
-Clone the repository.
+Run `make help` for the full list.
 
-```bash
-git clone https://github.com/<your-account>/<project>.git
-cd <project>
-```
-
-Install project prerequisites.
-
-```bash
-make install
-```
-
-Bootstrap the project.
-
-```bash
-make bootstrap
-```
-
-Validate the project.
-
-```bash
-make validate
-```
-
-Deploy the project.
-
-```bash
-make up
-```
-
-Verify project health.
-
-```bash
-make health
-```
+| Area | Targets |
+|---|---|
+| Setup | `install` `bootstrap` `validate` `lint` |
+| Build (Terraform) | `build` `init` `plan` `up` `apply` `down` `nuke` `update` |
+| Operate | `status` `logs [SERVICE=gitea\|db]` `restart` `shell` `db-shell` `admin` |
+| Health | `health` `diag` `smoke FORCE=1` |
+| Backup | `backup` `restore BACKUP=<dir\|latest> [FORCE=1]` |
+| Terraform extras | `tf-fmt` `tf-validate` `tf-output` `tf-state` `tf-version` |
+| Ansible | `ansible-ping` `ansible-check` `ansible-deploy [ANSIBLE_ARGS=-K]` |
 
 ---
 
-# Project Lifecycle
+## Configuration
 
-Every project created from this template follows the same operational workflow.
+Everything lives in `.env`, which `make bootstrap` creates from [.env.example](.env.example).
 
-```text
-Install
-   │
-   ▼
-Bootstrap
-   │
-   ▼
-Validate
-   │
-   ▼
-Deploy
-   │
-   ▼
-Health Check
-   │
-   ▼
-Operate
-   │
-   ▼
-Backup
-```
+| Key | Purpose |
+|---|---|
+| `LAB_NAME` | Prefix for container, network and volume names (`gitea-lab-gitea`, …) |
+| `GITEA_VERSION`, `POSTGRES_VERSION`, `TERRAFORM_VERSION` | Pinned image tags. Bump them, then run `make update` |
+| `GITEA_HTTP_BIND` / `GITEA_HTTP_PORT` | Use `127.0.0.1` to keep the web UI off your LAN |
+| `GITEA_SSH_PORT` | Host port for Git over SSH |
+| `GITEA_ROOT_URL`, `GITEA_DOMAIN` | Set these when Gitea sits behind a reverse proxy or a real hostname |
+| `GITEA_DISABLE_REGISTRATION` | `true` by default. The admin creates users |
+| `BACKUP_KEEP`, `BACKUP_STOP_GITEA` | Backup retention and consistency mode |
+
+Secrets (`POSTGRES_PASSWORD`, `GITEA_SECRET_KEY`, `GITEA_ADMIN_PASSWORD`) are generated once and never overwritten. `.env` and the Terraform state (which also holds these secrets) are kept at mode `600` and are gitignored.
 
 ---
 
-# Standard Make Targets
+## Documentation
 
-## Setup
+- [Architecture](docs/architecture.md)
+- [Operations](docs/operations.md)
+- [Backup and restore](docs/backup-restore.md)
+- [Monitoring](docs/monitoring.md)
 
-```bash
-make install
-make bootstrap
-make validate
-```
+## License
 
-## Docker
-
-```bash
-make up
-make down
-make restart
-make status
-make logs
-make update
-make clean
-```
-
-## Operations
-
-```bash
-make health
-make report
-make diag
-```
-
-## Backup
-
-```bash
-make backup
-make restore
-```
-
-## Ansible
-
-```bash
-make ansible-ping
-make ansible-check
-make ansible-deploy
-```
-
-## Terraform
-
-```bash
-make tf-init
-make tf-fmt
-make tf-validate
-make tf-plan
-make tf-apply
-make tf-destroy
-```
-
----
-
-# Validation
-
-Run a complete validation before committing changes.
-
-```bash
-make validate
-```
-
-Validation includes:
-
-* Repository structure
-* Docker Compose configuration
-* Terraform validation
-* Ansible syntax validation
-* Script verification
-* GitHub workflow validation
-* Required tooling verification
-
----
-
-# Health Checks
-
-Run:
-
-```bash
-make health
-```
-
-The template provides a reusable health framework.
-
-Individual projects extend these checks to monitor their own services and endpoints.
-
----
-
-# Continuous Integration
-
-The included GitHub Actions workflow validates every push and pull request by checking:
-
-* Docker Compose configuration
-* Terraform formatting
-* Terraform validation
-* Ansible syntax
-* Project validation
-
----
-
-# Versioning
-
-This repository uses a root-level `VERSION` file to identify template releases.
-
-Projects created from this template can reference the template version they were built from.
-
-Example:
-
-```text
-Infrastructure Project Template v1.0.0
-```
-
----
-
-# Using This Template
-
-1. Click **Use this template** on GitHub.
-2. Create a new repository.
-3. Clone the new repository.
-4. Customize the project for your application.
-5. Keep the operational workflow consistent.
-
----
-
-# Roadmap
-
-Future improvements may include:
-
-* Graphviz architecture template
-* ShellCheck integration
-* YAML linting
-* Markdown linting
-* Secret generation framework
-* Multi-host Ansible support
-* Additional Terraform provider templates
-
----
-
-# License
-
-MIT License
+MIT

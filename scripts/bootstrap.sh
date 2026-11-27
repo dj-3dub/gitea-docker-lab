@@ -1,70 +1,63 @@
 #!/usr/bin/env bash
+# Prepare a fresh checkout: check tools, create .env, generate secrets.
+# Safe to re-run: existing values in .env are never overwritten.
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 
-PROJECT_NAME="$(basename "$(pwd)")"
+banner "Gitea Lab Bootstrap"
 
-echo "=========================================="
-echo "$PROJECT_NAME Bootstrap"
-echo "=========================================="
-echo ""
-
-need_cmd() {
-  if command -v "$1" >/dev/null 2>&1; then
-    echo "$1: OK"
-  else
-    echo "$1: MISSING"
-    return 1
-  fi
-}
-
-echo "Checking required tools..."
-need_cmd git || true
-need_cmd make || true
-need_cmd curl || true
-need_cmd openssl || true
-need_cmd docker || true
-need_cmd ansible || true
-need_cmd terraform || true
-
-echo ""
-echo "Checking Docker Compose..."
-if docker compose version >/dev/null 2>&1; then
-  docker compose version
-else
-  echo "docker compose: MISSING"
-fi
-
-echo ""
-echo "Checking project files..."
-for file in docker-compose.yml Makefile .env.example scripts/healthcheck.sh; do
-  if [[ -f "$file" ]]; then
-    echo "$file: OK"
-  else
-    echo "$file: MISSING"
-  fi
+section "Required tools"
+for cmd in docker git make curl openssl; do
+  if have "$cmd"; then pass "$cmd"; else fail "$cmd missing (run: make install)"; fi
 done
-
-echo ""
-echo "Checking environment file..."
-if [[ ! -f .env ]]; then
-  if [[ -f .env.example ]]; then
-    cp .env.example .env
-    echo ".env created from .env.example"
-  else
-    echo ".env.example missing; cannot create .env"
-  fi
+if docker info >/dev/null 2>&1; then
+  pass "docker engine reachable"
 else
-  echo ".env: OK"
+  fail "docker engine not reachable (is the daemon running / are you in the docker group?)"
 fi
 
-echo ""
-echo "Setting script permissions..."
+section "Optional tools"
+for cmd in terraform ansible shellcheck yamllint; do
+  if have "$cmd"; then pass "$cmd"; else warn "$cmd not installed"; fi
+done
+have terraform || info "Terraform not installed: it will run in the hashicorp/terraform container."
+
+section "Environment file"
+if [[ -f "$ENV_FILE" ]]; then
+  pass "$ENV_FILE exists"
+else
+  [[ -f .env.example ]] || die ".env.example missing; cannot create $ENV_FILE"
+  (umask 077 && cp .env.example "$ENV_FILE")
+  pass "$ENV_FILE created from .env.example"
+fi
+chmod 600 "$ENV_FILE"
+
+# Replace each __GENERATE__ placeholder with its own random value.
+generated=0
+while IFS= read -r key; do
+  set_env_var "$key" "$(openssl rand -hex 24)"
+  info "generated $key"
+  generated=$((generated + 1))
+done < <(grep -E '^[A-Z0-9_]+=__GENERATE__$' "$ENV_FILE" | cut -d= -f1)
+[[ "$generated" -gt 0 ]] || pass "no secrets left to generate"
+
+# Match the data volume owner to the current user on first run.
+if grep -qE '^USER_UID=1000$' "$ENV_FILE" && [[ "$(id -u)" != 1000 ]]; then
+  set_env_var USER_UID "$(id -u)"
+  set_env_var USER_GID "$(id -g)"
+  info "set USER_UID/USER_GID to $(id -u):$(id -g)"
+fi
+
+section "Script permissions"
 chmod +x scripts/*.sh
-echo "scripts/*.sh: executable"
+pass "scripts/*.sh executable"
 
 echo ""
-echo "Bootstrap complete."
-echo "Next steps:"
-echo "  1. Edit .env"
-echo "  2. Run: make validate"
-echo "  3. Run: make up"
+if summary; then
+  echo ""
+  echo "Next steps:"
+  echo "  1. Review .env (ports, domain, admin e-mail)"
+  echo "  2. make build      # validate → terraform apply → admin → health"
+else
+  exit 1
+fi

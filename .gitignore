@@ -1,18 +1,19 @@
 # Environment / secrets
 .env
-*.tfvars
+.env.*
+!.env.example
+
+# Terraform (the provider lock file IS committed)
+.terraform/
 *.tfstate
 *.tfstate.*
-.terraform/
-.terraform.lock.hcl
+*.tfplan
+terraform.tfvars
+*.auto.tfvars
+crash.log
 
 # Backups
 backups/
-*.bak
-*.backup
-*.dump
-*.sql
-*.tar.gz
 
 # OS / editor
 .DS_Store
