@@ -1,47 +1,71 @@
-name: Validate Infrastructure Project
+name: CI
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-
+  lint:
+    name: Lint and validate
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install validation tools
+      - name: Install linters
         run: |
-          sudo apt-get update
-          sudo apt-get install -y make ansible curl openssl
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck yamllint ansible-core
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
 
-      - name: Make scripts executable
-        run: chmod +x scripts/*.sh
+      - name: make lint
+        run: make lint
 
-      - name: Validate Docker Compose
-        run: docker compose config
+  smoke:
+    name: Build with Terraform, backup, restore
+    runs-on: ubuntu-24.04
+    needs: lint
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Validate Ansible syntax
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+
+      - name: make build
+        run: make build
+
+      - name: Push, backup, delete, restore
+        run: FORCE=1 ./scripts/smoke-test.sh
+
+      - name: down / up keeps data
         run: |
-          cd ansible
-          ansible-playbook playbooks/deploy.yml --syntax-check
+          make down
+          make up
+          make health
 
-      - name: Terraform init
-        run: terraform -chdir=terraform/cloudflare init -backend=false
+      - name: Terraform container sees the same state (no drift)
+        run: TF_MODE=docker ./scripts/tf.sh plan -detailed-exitcode -input=false
 
-      - name: Terraform format check
-        run: terraform -chdir=terraform/cloudflare fmt -check -recursive
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker logs gitea-lab-gitea --tail 200 || true
+          docker logs gitea-lab-db --tail 100 || true
 
-      - name: Terraform validate
-        run: terraform -chdir=terraform/cloudflare validate
-
-      - name: Run project validation
-        run: make validate
+      - name: Tear down
+        if: always()
+        run: ./scripts/tf.sh destroy -auto-approve -input=false || true

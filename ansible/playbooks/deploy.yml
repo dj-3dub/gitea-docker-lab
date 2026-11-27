@@ -1,8 +1,8 @@
 ---
-- name: Deploy infrastructure project
+- name: Deploy Gitea lab
   hosts: project_hosts
-  become: false
+  become: true
   gather_facts: true
 
   roles:
-    - ../roles/project_host
+    - project_host

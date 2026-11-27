@@ -1,108 +1,82 @@
 #!/usr/bin/env bash
+# Check that the Gitea lab is up, reachable and matches Terraform.
+# Exits non-zero on failure.  HEALTH_SKIP_TF=1 skips the drift check.
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 
-PASSED=0
-WARNINGS=0
-FAILED=0
+banner "Gitea Lab Health Check"
 
-pass() {
-  echo "✓ $1"
-  PASSED=$((PASSED + 1))
-}
+load_env || warn "$ENV_FILE not found; using defaults"
+HTTP_PORT="${GITEA_HTTP_PORT:-3000}"
+SSH_PORT="${GITEA_SSH_PORT:-2222}"
 
-warn() {
-  echo "⚠ $1"
-  WARNINGS=$((WARNINGS + 1))
-}
-
-fail() {
-  echo "✗ $1"
-  FAILED=$((FAILED + 1))
-}
-
-check_cmd() {
-  command -v "$1" >/dev/null 2>&1 && pass "$1 installed" || warn "$1 missing"
-}
-
-check_port() {
-  local port="$1"
-  local name="$2"
-
-  if ss -tuln | grep -q ":${port} "; then
-    pass "$name port $port listening"
-  else
-    warn "$name port $port not listening"
-  fi
-}
-
-check_http() {
-  local url="$1"
-  local name="$2"
-
-  if curl -fsS "$url" >/dev/null 2>&1; then
-    pass "$name reachable"
-  else
-    warn "$name not reachable"
-  fi
-}
-
-echo "===================================================="
-echo "Infrastructure Project Health Check"
-echo "===================================================="
-echo ""
-
-echo "Tools"
-echo "-----"
-check_cmd docker
-check_cmd curl
-check_cmd ss
-echo ""
-
-echo "Docker"
-echo "------"
+section "Docker"
 if docker info >/dev/null 2>&1; then
   pass "Docker engine running"
 else
   fail "Docker engine not running"
+  summary || exit 1
 fi
 
-if docker compose ps >/dev/null 2>&1; then
-  pass "Docker Compose project available"
+section "Containers"
+for ctr in "$(gitea_ctr)" "$(db_ctr)"; do
+  if ! container_exists "$ctr"; then
+    fail "$ctr: missing (run: make up)"
+  elif ! container_running "$ctr"; then
+    fail "$ctr: $(docker inspect -f '{{.State.Status}}' "$ctr")"
+  else
+    health="$(container_health "$ctr")"
+    case "$health" in
+      healthy|"") pass "$ctr: running${health:+ ($health)}" ;;
+      starting)   warn "$ctr: running (health: starting)" ;;
+      *)          fail "$ctr: running (health: $health)" ;;
+    esac
+  fi
+done
+
+section "Endpoints"
+if curl -fsS --max-time 5 "http://127.0.0.1:${HTTP_PORT}/api/healthz" >/dev/null 2>&1; then
+  pass "HTTP  http://127.0.0.1:${HTTP_PORT}/api/healthz"
 else
-  warn "Docker Compose project unavailable"
+  fail "HTTP  http://127.0.0.1:${HTTP_PORT}/api/healthz not responding"
 fi
-echo ""
 
-echo "Containers"
-echo "----------"
-if docker compose ps --format json >/dev/null 2>&1; then
-  docker compose ps
+ssh_banner="$(timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/${SSH_PORT} && head -c 64 <&3" 2>/dev/null | head -n1 || true)"
+if [[ "$ssh_banner" == SSH-* ]]; then
+  pass "SSH   127.0.0.1:${SSH_PORT} (${ssh_banner%$'\r'})"
 else
-  warn "No Compose containers found or Compose config invalid"
+  fail "SSH   127.0.0.1:${SSH_PORT} not answering"
 fi
-echo ""
 
-echo "Common Ports"
-echo "------------"
-check_port 80 "HTTP"
-check_port 443 "HTTPS"
-check_port 3000 "Grafana"
-check_port 9090 "Prometheus"
-check_port 9000 "Application"
-echo ""
-
-echo "HTTP Checks"
-echo "-----------"
-check_http "http://localhost:3000/api/health" "Grafana"
-check_http "http://localhost:9090/-/healthy" "Prometheus"
-echo ""
-
-echo "Result"
-echo "------"
-echo "Passed:   $PASSED"
-echo "Warnings: $WARNINGS"
-echo "Failed:   $FAILED"
-
-if [[ "$FAILED" -gt 0 ]]; then
-  exit 1
+if [[ "${HEALTH_SKIP_TF:-0}" != 1 ]]; then
+  section "Terraform"
+  set +e
+  ./scripts/tf.sh plan -detailed-exitcode -input=false -lock=false >/dev/null 2>&1 </dev/null
+  rc=$?
+  set -e
+  case "$rc" in
+    0) pass "No drift: running lab matches terraform/ and .env" ;;
+    2) warn "Drift: run 'make plan' to see differences, 'make up' to fix" ;;
+    *) warn "terraform plan failed (run: make plan)" ;;
+  esac
 fi
+
+section "Backups"
+backup_dir="${BACKUP_DIR:-backups}"
+latest="$(find "$backup_dir" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended \
+  -regex '.*/[0-9]{8}-[0-9]{6}' 2>/dev/null | sort | tail -n1 || true)"
+if [[ -z "$latest" ]]; then
+  warn "No backups yet (run: make backup)"
+else
+  age_h=$(( ($(date +%s) - $(stat -c %Y "$latest")) / 3600 ))
+  if [[ "$age_h" -le 48 ]]; then
+    pass "Latest backup $(basename "$latest") (${age_h}h old)"
+  else
+    warn "Latest backup $(basename "$latest") is ${age_h}h old"
+  fi
+fi
+
+free_pct=$(df -P . | awk 'NR == 2 { gsub("%", "", $5); print 100 - $5 }')
+if [[ "$free_pct" -ge 10 ]]; then pass "Disk ${free_pct}% free"; else warn "Disk only ${free_pct}% free"; fi
+
+summary

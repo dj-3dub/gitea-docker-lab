@@ -1,0 +1,6 @@
+---
+# Overrides for roles/project_host/defaults/main.yml.
+# project_dir: /opt/gitea-lab
+# project_user: deploy
+# install_docker: true
+# deploy_env_file: true

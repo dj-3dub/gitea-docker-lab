@@ -1,4 +1,130 @@
 ---
-- name: Validate project host role
-  ansible.builtin.debug:
-    msg: "Project host role loaded successfully."
+- name: Check for a local .env
+  ansible.builtin.stat:
+    path: "{{ project_src }}/.env"
+  delegate_to: localhost
+  become: false
+  register: local_env
+
+- name: Require .env before deploying
+  ansible.builtin.assert:
+    that: local_env.stat.exists or not deploy_env_file
+    fail_msg: "No .env in {{ project_src }}. Run `make bootstrap` first."
+
+- name: Install Docker Engine
+  when: install_docker and ansible_facts.os_family == 'Debian'
+  block:
+    - name: Install apt prerequisites
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, make, openssl, git]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Add Docker apt key
+      ansible.builtin.get_url:
+        url: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}/gpg"
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}
+          signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}
+          {{ ansible_facts.distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker packages
+      ansible.builtin.apt:
+        name: [docker-ce, docker-ce-cli, containerd.io]
+        state: present
+
+    - name: Enable Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+- name: Add project user to the docker group
+  ansible.builtin.user:
+    name: "{{ project_user }}"
+    groups: docker
+    append: true
+
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ project_dir }}"
+    state: directory
+    owner: "{{ project_user }}"
+    mode: "0750"
+
+- name: Copy project files
+  ansible.builtin.copy:
+    src: "{{ project_src }}/{{ item }}"
+    dest: "{{ project_dir }}/"
+    owner: "{{ project_user }}"
+    mode: preserve
+  loop: "{{ project_files }}"
+
+- name: Create terraform directory
+  ansible.builtin.file:
+    path: "{{ project_dir }}/terraform"
+    state: directory
+    owner: "{{ project_user }}"
+    mode: "0750"
+
+- name: Copy Terraform configuration
+  ansible.builtin.copy:
+    src: "{{ project_src }}/terraform/{{ item }}"
+    dest: "{{ project_dir }}/terraform/{{ item }}"
+    owner: "{{ project_user }}"
+    mode: "0640"
+  loop: "{{ terraform_files }}"
+
+- name: Copy .env
+  ansible.builtin.copy:
+    src: "{{ project_src }}/.env"
+    dest: "{{ project_dir }}/.env"
+    owner: "{{ project_user }}"
+    mode: "0600"
+  when: deploy_env_file
+
+# Terraform runs on the host itself (local binary, or the hashicorp/terraform
+# container if it is not installed), so state lives next to the lab it manages.
+- name: Build Gitea lab with Terraform
+  ansible.builtin.command:
+    cmd: make up
+    chdir: "{{ project_dir }}"
+  become: true
+  become_user: "{{ project_user }}"
+  register: tf_up
+  changed_when: tf_up.stdout is not search('0 added, 0 changed, 0 destroyed')
+
+- name: Read Gitea HTTP port from .env
+  ansible.builtin.command:
+    cmd: grep -oP '^GITEA_HTTP_PORT=\K[0-9]+' .env
+    chdir: "{{ project_dir }}"
+  register: env_port
+  changed_when: false
+  failed_when: false
+
+- name: Wait for Gitea health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ env_port.stdout | default(gitea_http_port, true) }}/api/healthz"
+    status_code: 200
+  register: gitea_health
+  retries: 20
+  delay: 5
+  until: gitea_health.status == 200
+
+- name: Create Gitea admin user
+  ansible.builtin.command:
+    cmd: ./scripts/create-admin.sh
+    chdir: "{{ project_dir }}"
+  become: true
+  become_user: "{{ project_user }}"
+  register: admin_out
+  changed_when: "'Created admin user' in admin_out.stdout"

@@ -1,0 +1,25 @@
+---
+# Where the project is copied on the target host.
+project_dir: /opt/gitea-lab
+# Owner of the project directory; added to the docker group.
+project_user: "{{ ansible_user | default(lookup('env', 'USER')) }}"
+# Local checkout to deploy (the repository root).
+project_src: "{{ playbook_dir }}/../.."
+# Install Docker Engine from download.docker.com if missing (Debian/Ubuntu).
+install_docker: true
+# Copy the local .env to the host. Disable to manage .env on the host yourself.
+deploy_env_file: true
+# Port used for the post-deploy health check.
+gitea_http_port: 3000
+project_files:
+  - Makefile
+  - VERSION
+  - .env.example
+  - scripts
+# Terraform files (state stays on the target host, next to its lab).
+terraform_files:
+  - versions.tf
+  - variables.tf
+  - main.tf
+  - outputs.tf
+  - .terraform.lock.hcl
