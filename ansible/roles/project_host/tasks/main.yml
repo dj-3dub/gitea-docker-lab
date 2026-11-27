@@ -11,8 +11,17 @@
     that: local_env.stat.exists or not deploy_env_file
     fail_msg: "No .env in {{ project_src }}. Run `make bootstrap` first."
 
+- name: Check whether Docker is already installed
+  ansible.builtin.command: docker --version
+  register: docker_present
+  changed_when: false
+  failed_when: false
+
 - name: Install Docker Engine
-  when: install_docker and ansible_facts.os_family == 'Debian'
+  when:
+    - install_docker
+    - docker_present.rc != 0
+    - ansible_facts.os_family == 'Debian'
   block:
     - name: Install apt prerequisites
       ansible.builtin.apt:
@@ -83,6 +92,31 @@
     owner: "{{ project_user }}"
     mode: "0640"
   loop: "{{ terraform_files }}"
+
+- name: Check for local secrets
+  ansible.builtin.stat:
+    path: "{{ project_src }}/secrets"
+  delegate_to: localhost
+  become: false
+  register: local_secrets
+
+- name: Create secrets directory
+  ansible.builtin.file:
+    path: "{{ project_dir }}/secrets"
+    state: directory
+    owner: "{{ project_user }}"
+    mode: "0700"
+  when: deploy_env_file
+
+# The same secrets as the controller, so backups restore on either side.
+- name: Copy secrets
+  ansible.builtin.copy:
+    src: "{{ project_src }}/secrets/{{ item }}"
+    dest: "{{ project_dir }}/secrets/{{ item }}"
+    owner: "{{ project_user }}"
+    mode: "0600"
+  loop: [postgres_password, gitea_secret_key, restic_password]
+  when: deploy_env_file and local_secrets.stat.exists
 
 - name: Copy .env
   ansible.builtin.copy:

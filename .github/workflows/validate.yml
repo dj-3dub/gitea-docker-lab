@@ -69,3 +69,40 @@ jobs:
       - name: Tear down
         if: always()
         run: ./scripts/tf.sh destroy -auto-approve -input=false || true
+
+  ansible:
+    name: Ansible deploy (real sudo, Terraform container)
+    runs-on: ubuntu-24.04
+    needs: lint
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ansible-core
+
+      # No setup-terraform here on purpose: the role must fall back to the
+      # hashicorp/terraform container on a host without Terraform.
+      - name: Bootstrap .env and secrets on the controller
+        run: make bootstrap
+
+      - name: Deploy to this runner
+        run: make ansible-deploy
+
+      - name: Second run changes nothing
+        run: |
+          make ansible-deploy | tee second-run.log
+          grep -qE 'changed=0 +unreachable=0 +failed=0' second-run.log
+
+      - name: Deployed lab is healthy
+        run: cd /opt/gitea-lab && make health
+
+      - name: Logs on failure
+        if: failure()
+        run: docker logs gitea-lab-gitea --tail 200 || true
+
+      - name: Tear down
+        if: always()
+        run: cd /opt/gitea-lab && ./scripts/tf.sh destroy -auto-approve -input=false || true

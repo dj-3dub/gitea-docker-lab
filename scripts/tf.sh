@@ -32,13 +32,11 @@ declare -A TF_VARS=(
   [GITEA_HTTP_PORT]=http_port
   [GITEA_SSH_BIND]=ssh_bind
   [GITEA_SSH_PORT]=ssh_port
-  [GITEA_SECRET_KEY]=gitea_secret_key
   [GITEA_DISABLE_REGISTRATION]=disable_registration
   [GITEA_REQUIRE_SIGNIN_VIEW]=require_signin_view
   [GITEA_LOG_LEVEL]=log_level
   [POSTGRES_DB]=postgres_db
   [POSTGRES_USER]=postgres_user
-  [POSTGRES_PASSWORD]=postgres_password
 )
 env_args=()
 for key in "${!TF_VARS[@]}"; do
@@ -47,6 +45,10 @@ for key in "${!TF_VARS[@]}"; do
     env_args+=(-e "TF_VAR_${TF_VARS[$key]}")
   fi
 done
+
+# Only the location of the secret files reaches Terraform (and its state).
+export TF_VAR_secrets_dir="$REPO_ROOT/$SECRETS_DIR"
+env_args+=(-e TF_VAR_secrets_dir)
 
 case "$TF_MODE" in
   auto)   if have terraform; then TF_MODE=local; else TF_MODE=docker; fi ;;

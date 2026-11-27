@@ -79,6 +79,23 @@ else
   fi
 fi
 
+if [[ -n "${RESTIC_REPOSITORY:-}" ]]; then
+  marker="$backup_dir/.offsite-last"
+  if [[ ! -s "$marker" ]]; then
+    warn "Off-site: no upload yet (run: make offsite)"
+  else
+    off_h=$(( ($(date +%s) - $(cat "$marker")) / 3600 ))
+    if [[ "$off_h" -le 48 ]]; then pass "Off-site copy ${off_h}h old"; else warn "Off-site copy is ${off_h}h old"; fi
+  fi
+fi
+if have crontab; then
+  if crontab -l 2>/dev/null | grep -qF "# gitea-lab-backup:${REPO_ROOT}"; then
+    pass "Nightly backup scheduled"
+  else
+    warn "No backup schedule (run: make schedule)"
+  fi
+fi
+
 free_pct=$(df -P . | awk 'NR == 2 { gsub("%", "", $5); print 100 - $5 }')
 if [[ "$free_pct" -ge 10 ]]; then pass "Disk ${free_pct}% free"; else warn "Disk only ${free_pct}% free"; fi
 

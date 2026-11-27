@@ -23,3 +23,6 @@ backups/
 # Runtime
 *.log
 tmp/
+
+# Generated secrets (database password, Gitea SECRET_KEY)
+secrets/

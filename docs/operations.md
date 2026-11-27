@@ -23,7 +23,9 @@ Example: to keep the web UI off the LAN, set `GITEA_HTTP_BIND=127.0.0.1`, then r
 
 ## Upgrading Gitea
 
-1. Read the [Gitea release notes](https://blog.gitea.com/) for breaking changes.
+`make check-updates` shows which pinned versions are behind. A weekly CI job also opens (or updates) a GitHub issue when something is out of date.
+
+1. Read the [Gitea release notes](https://blog.gitea.com/) for breaking changes. Gitea moved from 1.x to a new numbering scheme after 1.27 (28.0.0, 28.1.0, …), so 1.27 → 28 is a major upgrade.
 2. Set `GITEA_VERSION` in `.env` (and in `.env.example`, so new installs get it too).
 3. Run `make plan` to confirm that only the Gitea image and container change.
 4. Run `make update`. It takes a backup and then applies. Gitea runs its database migrations on startup.
@@ -40,6 +42,18 @@ make nuke                      # removes the old data volume
 make up
 make restore BACKUP=latest
 ```
+
+## Rotating secrets
+
+- **`gitea_secret_key`**: don't rotate it. Gitea uses it to encrypt stored 2FA secrets and tokens, and data encrypted with the old key becomes unreadable.
+- **`postgres_password`**: change it inside Postgres first, then in the file, then restart both containers:
+  ```bash
+  new=$(openssl rand -hex 24)
+  docker exec gitea-lab-db psql -U gitea -d gitea -c "ALTER USER gitea PASSWORD '$new';"
+  printf '%s' "$new" > secrets/postgres_password
+  make restart
+  ```
+- **`restic_password`**: use `restic key add` / `restic key remove` against the repository, not a new file.
 
 ## Users
 
@@ -63,7 +77,7 @@ The role installs Docker if it's missing, copies the Makefile, scripts, Terrafor
 
 | Symptom | Check |
 |---|---|
-| `make up` times out waiting for health | `make logs`. A changed `POSTGRES_PASSWORD` after the database volume was created is the usual cause. The password is only applied on first creation. |
+| `make up` times out waiting for health | `make logs`. A changed `secrets/postgres_password` after the database volume was created is the usual cause. The password is only applied on first creation (see "Rotating secrets"). |
 | `make health` reports drift | `make plan` shows what differs. `make up` puts it back. |
 | `permission denied ... docker.sock` | Your user isn't in the `docker` group. Run `make install`, then log in again. |
 | Clone URLs show `localhost` | Set `GITEA_ROOT_URL` / `GITEA_SSH_DOMAIN` in `.env`, then run `make up`. |
