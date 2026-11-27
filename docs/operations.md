@@ -33,15 +33,41 @@ Example: to keep the web UI off the LAN, set `GITEA_HTTP_BIND=127.0.0.1`, then r
 
 To roll back, set the old version, run `make up`, then `make restore BACKUP=<backup from step 4>`. Gitea migrations are not reversible, so restoring the backup is the only way back.
 
-A **major** PostgreSQL upgrade (for example 17 → 18) needs a dump and restore, not just a new tag:
+### Example: Gitea 1.27.3 → 28.4.0 (tested)
+
+`make plan` showed only the Gitea image and container being replaced. `make update` took a backup, Gitea ran its database migrations (343–350) on startup, and every repository, issue, comment, label and commit was unchanged afterwards. Gitea 28's two breaking changes don't affect this lab: the git egress proxy only matters if you set migration or webhook host lists, and Actions run retention only matters if you use Gitea Actions.
+
+## Upgrading PostgreSQL
+
+**Minor versions** (19.0 → 19.1) come with the floating `19-alpine` tag: run `make update`.
+
+**Major versions** (17 → 19) can't read an older data directory, so they need a dump and restore:
 
 ```bash
-make backup
-make nuke                      # removes the old data volume
-# set POSTGRES_VERSION=18-alpine in .env
-make up
-make restore BACKUP=latest
+# 1. set POSTGRES_VERSION=19-alpine in .env
+make upgrade-postgres
 ```
+
+The script:
+
+1. Records row counts (repositories, users, issues, comments, labels).
+2. Takes a normal backup.
+3. Rebuilds **only** the database container and its volume on the new version.
+4. Restores the backup.
+5. Fails loudly if the counts differ.
+
+Downtime is about a minute. Keep the backup it names until you're happy.
+
+If you change `POSTGRES_VERSION` to a new major and run plain `make up`, `make up` **refuses**. Otherwise Postgres would start an empty database, and Gitea would come up looking empty. The message tells you to use `make upgrade-postgres`.
+
+**Rolling back** needs the backup taken before the upgrade, because an older `pg_restore` can't read a newer dump:
+
+```bash
+# set POSTGRES_VERSION back to 17-alpine in .env
+make upgrade-postgres BACKUP=backups/<stamp from the upgrade>
+```
+
+Both directions are tested, along with the refusal in `make up`. CI rehearses the 17 → 19 upgrade on every PR.
 
 ## Rotating secrets
 

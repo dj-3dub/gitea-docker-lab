@@ -17,13 +17,18 @@ variable "running" {
 variable "gitea_version" {
   description = "Gitea image tag (GITEA_VERSION)."
   type        = string
-  default     = "1.27.3"
+  default     = "28.4.0"
 }
 
 variable "postgres_version" {
-  description = "PostgreSQL image tag (POSTGRES_VERSION)."
+  description = "PostgreSQL image tag (POSTGRES_VERSION), starting with the major version, e.g. 19-alpine."
   type        = string
-  default     = "17-alpine"
+  default     = "19-alpine"
+
+  validation {
+    condition     = can(tonumber(split("-", var.postgres_version)[0]))
+    error_message = "postgres_version must start with the major version number, e.g. 19-alpine or 19.1-alpine."
+  }
 }
 
 # ---------- Gitea ----------

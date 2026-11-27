@@ -17,8 +17,8 @@ Terraform does **not** need to be installed. If it is missing, every Terraform s
 
 | Component | Details |
 |---|---|
-| Gitea | `docker.gitea.com/gitea:1.27.3`. Web UI on `:3000`, Git over SSH on `:2222` |
-| PostgreSQL | `postgres:17-alpine`. Gitea is only created after the database is healthy |
+| Gitea | `docker.gitea.com/gitea:28.4.0`. Web UI on `:3000`, Git over SSH on `:2222` |
+| PostgreSQL | `postgres:19-alpine`. Gitea is only created after the database is healthy. Major upgrades with `make upgrade-postgres` |
 | Terraform | `terraform/`, `kreuzwerker/docker` provider. Runs locally or in a container (`TF_MODE`) |
 | Secrets | Database password and `SECRET_KEY` in `secrets/` (mode 600), mounted read-only. **Never in Terraform state or `docker inspect`** |
 | Backups | `pg_dump` + data volume + `.env` + secrets + state, with checksums and retention. Nightly via `make schedule` |
@@ -98,7 +98,7 @@ Run `make help` for the full list.
 | Area | Targets |
 |---|---|
 | Setup | `install` `bootstrap` `validate` `lint` |
-| Build (Terraform) | `build` `init` `plan` `up` `apply` `down` `nuke` `update` |
+| Build (Terraform) | `build` `init` `plan` `up` `apply` `down` `nuke` `update` `upgrade-postgres` |
 | Operate | `status` `logs [SERVICE=gitea\|db]` `restart` `shell` `db-shell` `admin` |
 | Health | `health` `diag` `check-updates` `smoke FORCE=1` |
 | Backup | `backup` `restore BACKUP=<dir\|latest> [FORCE=1]` `schedule` `unschedule` |

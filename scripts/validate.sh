@@ -14,7 +14,7 @@ section "Project files"
 for f in README.md LICENSE Makefile VERSION .env.example .gitignore .yamllint \
   scripts/lib.sh scripts/install.sh scripts/bootstrap.sh scripts/validate.sh \
   scripts/healthcheck.sh scripts/backup.sh scripts/restore.sh scripts/tf.sh \
-  scripts/create-admin.sh scripts/smoke-test.sh scripts/offsite.sh scripts/schedule.sh scripts/check-updates.sh \
+  scripts/create-admin.sh scripts/smoke-test.sh scripts/offsite.sh scripts/schedule.sh scripts/check-updates.sh scripts/upgrade-postgres.sh scripts/preflight.sh \
   ansible/ansible.cfg ansible/inventory/hosts.ini ansible/playbooks/deploy.yml \
   ansible/roles/project_host/tasks/main.yml \
   terraform/versions.tf terraform/main.tf terraform/variables.tf \

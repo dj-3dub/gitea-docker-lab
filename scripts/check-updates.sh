@@ -35,12 +35,12 @@ add "Gitea"     "$(pinned GITEA_VERSION)"     "$(gh_latest go-gitea/gitea)"     
 add "Terraform" "$(pinned TERRAFORM_VERSION)" "$(gh_latest hashicorp/terraform)"  "TERRAFORM_VERSION — container image only"
 add "restic"    "$(pinned RESTIC_VERSION)"    "$(gh_latest restic/restic)"        "RESTIC_VERSION — off-site backups"
 
-# PostgreSQL floats on a major tag (e.g. 17-alpine gets minor updates on
+# PostgreSQL floats on a major tag (e.g. 19-alpine gets minor updates on
 # `make update`); only a new major needs action, and it needs a dump/restore.
 pg="$(pinned POSTGRES_VERSION)"; pg_major="${pg%%-*}"; pg_suffix="${pg#"$pg_major"}"
 pg_latest="$pg_major"
 for next in $((pg_major + 1)) $((pg_major + 2)); do
-  if curl -fsS -m 20 -o /dev/null "https://hub.docker.com/v2/repositories/library/postgres/tags/${next}${pg_suffix}"; then
+  if curl -fsS -m 20 -o /dev/null "https://hub.docker.com/v2/repositories/library/postgres/tags/${next}${pg_suffix}" 2>/dev/null; then
     pg_latest="$next"
   fi
 done
