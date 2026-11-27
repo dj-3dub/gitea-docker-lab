@@ -86,7 +86,7 @@ lab_name()        { echo "${LAB_NAME:-gitea-lab}"; }
 gitea_ctr()       { echo "$(lab_name)-gitea"; }
 db_ctr()          { echo "$(lab_name)-db"; }
 gitea_volume()    { echo "$(lab_name)-gitea-data"; }
-gitea_image()     { echo "docker.gitea.com/gitea:${GITEA_VERSION:-1.27.3}"; }
+gitea_image()     { echo "docker.gitea.com/gitea:${GITEA_VERSION:-28.4.0}"; }
 
 container_exists()  { docker inspect "$1" >/dev/null 2>&1; }
 container_running() { [[ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == true ]]; }

@@ -70,6 +70,55 @@ jobs:
         if: always()
         run: ./scripts/tf.sh destroy -auto-approve -input=false || true
 
+  postgres-upgrade:
+    name: PostgreSQL 17 -> 19 upgrade rehearsal
+    runs-on: ubuntu-24.04
+    needs: lint
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+
+      - name: Build on PostgreSQL 17 with a test repository
+        run: |
+          make bootstrap
+          sed -i 's/^POSTGRES_VERSION=.*/POSTGRES_VERSION=17-alpine/' .env
+          make up
+          make admin
+          set -a; . ./.env; set +a
+          curl -fsS -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASSWORD" -H 'Content-Type: application/json' \
+            -d '{"name":"must-survive","auto_init":true}' http://127.0.0.1:3000/api/v1/user/repos > /dev/null
+
+      - name: make up refuses a new major on old data
+        run: |
+          sed -i 's/^POSTGRES_VERSION=.*/POSTGRES_VERSION=19-alpine/' .env
+          if make up; then echo "make up should have refused"; exit 1; fi
+
+      - name: make upgrade-postgres
+        run: FORCE=1 make upgrade-postgres
+
+      - name: Data survived on PostgreSQL 19
+        run: |
+          set -a; . ./.env; set +a
+          docker exec gitea-lab-db psql -U gitea -d gitea -tAc 'show server_version' | grep -q '^19'
+          curl -fsS -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASSWORD" \
+            "http://127.0.0.1:3000/api/v1/repos/$GITEA_ADMIN_USER/must-survive" > /dev/null
+          make health
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker logs gitea-lab-gitea --tail 100 || true
+          docker logs gitea-lab-db --tail 100 || true
+
+      - name: Tear down
+        if: always()
+        run: ./scripts/tf.sh destroy -auto-approve -input=false || true
+
   ansible:
     name: Ansible deploy (real sudo, Terraform container)
     runs-on: ubuntu-24.04

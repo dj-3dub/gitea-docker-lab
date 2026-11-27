@@ -30,7 +30,7 @@ export ANSIBLE_CONFIG := $(CURDIR)/ansible/ansible.cfg
 ANSIBLE_ARGS ?=
 
 .PHONY: help install bootstrap validate lint build \
-	init plan up apply down restart status logs shell db-shell update nuke \
+	init plan up apply down restart status logs shell db-shell update upgrade-postgres nuke \
 	admin health diag check-updates smoke backup restore schedule unschedule \
 	offsite offsite-snapshots offsite-check offsite-restore \
 	tf-fmt tf-validate tf-output tf-state tf-version \
@@ -77,9 +77,11 @@ plan: init ## Preview what Terraform would change
 	$(TF) plan -input=false
 
 up: init ## Create/update the lab (images, network, volumes, containers) and wait until healthy
+	@./scripts/preflight.sh
 	$(TF) apply -input=false -auto-approve
 
 apply: init ## Like up, but shows the plan and asks first
+	@./scripts/preflight.sh
 	$(TF) apply -input=false
 
 down: init ## Remove the containers; images, network and data volumes are kept
@@ -93,6 +95,9 @@ nuke: ## DANGER: destroy everything Terraform created, including data volumes
 update: ## Back up, then apply version changes from .env (e.g. GITEA_VERSION)
 	@$(MAKE) backup
 	@$(MAKE) up
+
+upgrade-postgres: init ## Move to a new PostgreSQL major (set POSTGRES_VERSION first; dump/restore)
+	BACKUP="$(BACKUP)" FORCE="$(FORCE)" ./scripts/upgrade-postgres.sh
 
 ##@ Operate
 

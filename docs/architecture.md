@@ -33,7 +33,7 @@
 | `docker_image.gitea`, `docker_image.postgres` | yes | `keep_locally = true`. Changing the tag in `.env` pulls the new image and replaces the container |
 | `docker_network.lab` | yes | `<LAB_NAME>-net`. The database is reachable as `db` |
 | `docker_volume.gitea_data`, `docker_volume.db_data` | yes | Only `make nuke` (`terraform destroy`) removes them |
-| `docker_container.db` | no | `wait = true`: Terraform blocks until `pg_isready` passes |
+| `docker_container.db` | no | `wait = true`: Terraform blocks until `pg_isready` passes. The volume is mounted at `/var/lib/postgresql` for PostgreSQL 18+ (data in `<major>/docker/`) and at `/var/lib/postgresql/data` for 17 and older, following the official image |
 | `docker_container.gitea` | no | Created after the database is healthy. Waits for `/api/healthz` |
 
 The containers use `count = var.running ? 1 : 0`. `make down` sets `running = false`, so they are removed in a normal `apply`, without targeted destroys, and the data stays.

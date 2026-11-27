@@ -4,6 +4,11 @@ locals {
   }
   containers = var.running ? 1 : 0
 
+  # postgres:18+ images keep data in /var/lib/postgresql/<major>/docker and
+  # expect the volume one level up; 17 and older use .../data directly.
+  pg_major      = tonumber(split("-", var.postgres_version)[0])
+  pg_data_mount = local.pg_major >= 18 ? "/var/lib/postgresql" : "/var/lib/postgresql/data"
+
   # Read-only secret mounts (see variable "secrets_dir").
   secret_db_password = "/run/secrets/postgres_password"
   secret_gitea_key   = "/run/secrets/gitea_secret_key"
@@ -77,7 +82,7 @@ resource "docker_container" "db" {
 
   volumes {
     volume_name    = docker_volume.db_data.name
-    container_path = "/var/lib/postgresql/data"
+    container_path = local.pg_data_mount
   }
 
   volumes {
