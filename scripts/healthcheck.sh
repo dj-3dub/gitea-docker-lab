@@ -41,7 +41,10 @@ else
   fail "HTTP  http://127.0.0.1:${HTTP_PORT}/api/healthz not responding"
 fi
 
-ssh_banner="$(timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/${SSH_PORT} && head -c 64 <&3" 2>/dev/null | head -n1 || true)"
+# Read only the server's greeting line; SSH then waits for the client, so
+# reading a fixed byte count would block until the timeout.
+# shellcheck disable=SC2016  # $1 expands in the inner shell (the port argument)
+ssh_banner="$(timeout 5 bash -c 'exec 3<>"/dev/tcp/127.0.0.1/$1" && IFS= read -r line <&3 && printf "%s\n" "$line"' _ "$SSH_PORT" 2>/dev/null || true)"
 if [[ "$ssh_banner" == SSH-* ]]; then
   pass "SSH   127.0.0.1:${SSH_PORT} (${ssh_banner%$'\r'})"
 else
