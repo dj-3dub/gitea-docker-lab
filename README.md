@@ -20,10 +20,13 @@ Terraform does **not** need to be installed. If it is missing, every Terraform s
 | Gitea | `docker.gitea.com/gitea:1.27.3`. Web UI on `:3000`, Git over SSH on `:2222` |
 | PostgreSQL | `postgres:17-alpine`. Gitea is only created after the database is healthy |
 | Terraform | `terraform/`, `kreuzwerker/docker` provider. Runs locally or in a container (`TF_MODE`) |
-| Backups | `pg_dump` + data volume archive + `.env` + Terraform state, with checksums and retention |
-| Health | Containers, HTTP, SSH, **Terraform drift**, backup age, disk |
-| Ansible | Deploys the lab to remote hosts (Terraform then runs on each host) |
-| CI | ShellCheck, yamllint, Terraform, Ansible, then a real build, backup, restore and drift check |
+| Secrets | Database password and `SECRET_KEY` in `secrets/` (mode 600), mounted read-only. **Never in Terraform state or `docker inspect`** |
+| Backups | `pg_dump` + data volume + `.env` + secrets + state, with checksums and retention. Nightly via `make schedule` |
+| Off-site | Optional encrypted copies with restic (local or NAS path, S3, B2, REST), tested with a full disaster-recovery drill |
+| Health | Containers, HTTP, SSH, **Terraform drift**, backup and off-site age, schedule, disk |
+| Updates | `make check-updates`, a weekly CI issue for new image versions, and Dependabot for Actions and the provider |
+| Ansible | Deploys the lab to remote hosts (Terraform then runs on each host). Tested in CI with real `sudo` |
+| CI | Lint, a live build/backup/restore/drift job, and an Ansible deploy that must be idempotent |
 
 <p>
   <img src="docs/screenshots/terminal-make-up.png" width="49%" alt="make up runs terraform apply">
@@ -41,6 +44,14 @@ make build
 ```
 
 Open <http://localhost:3000> and sign in as `GITEA_ADMIN_USER` with the `GITEA_ADMIN_PASSWORD` that `make bootstrap` generated in `.env`.
+
+Then protect your data:
+
+```bash
+make schedule      # nightly backup at 03:30 (BACKUP_SCHEDULE in .env)
+# optional: set RESTIC_REPOSITORY in .env for encrypted off-site copies,
+# and store secrets/restic_password somewhere other than this machine
+```
 
 ### How Terraform is used
 
@@ -89,8 +100,9 @@ Run `make help` for the full list.
 | Setup | `install` `bootstrap` `validate` `lint` |
 | Build (Terraform) | `build` `init` `plan` `up` `apply` `down` `nuke` `update` |
 | Operate | `status` `logs [SERVICE=gitea\|db]` `restart` `shell` `db-shell` `admin` |
-| Health | `health` `diag` `smoke FORCE=1` |
-| Backup | `backup` `restore BACKUP=<dir\|latest> [FORCE=1]` |
+| Health | `health` `diag` `check-updates` `smoke FORCE=1` |
+| Backup | `backup` `restore BACKUP=<dir\|latest> [FORCE=1]` `schedule` `unschedule` |
+| Off-site | `offsite` `offsite-snapshots` `offsite-check` `offsite-restore [SNAPSHOT=]` |
 | Terraform extras | `tf-fmt` `tf-validate` `tf-output` `tf-state` `tf-version` |
 | Ansible | `ansible-ping` `ansible-check` `ansible-deploy [ANSIBLE_ARGS=-K]` |
 
@@ -108,9 +120,20 @@ Everything lives in `.env`, which `make bootstrap` creates from [.env.example](.
 | `GITEA_SSH_PORT` | Host port for Git over SSH |
 | `GITEA_ROOT_URL`, `GITEA_DOMAIN` | Set these when Gitea sits behind a reverse proxy or a real hostname |
 | `GITEA_DISABLE_REGISTRATION` | `true` by default. The admin creates users |
-| `BACKUP_KEEP`, `BACKUP_STOP_GITEA` | Backup retention and consistency mode |
+| `BACKUP_KEEP`, `BACKUP_STOP_GITEA`, `BACKUP_SCHEDULE`, `BACKUP_NOTIFY_URL` | Retention, consistency mode, schedule, and an alert URL for failed backups |
+| `RESTIC_REPOSITORY`, `OFFSITE_KEEP` | Off-site target (empty = off) and its retention |
 
-Secrets (`POSTGRES_PASSWORD`, `GITEA_SECRET_KEY`, `GITEA_ADMIN_PASSWORD`) are generated once and never overwritten. `.env` and the Terraform state (which also holds these secrets) are kept at mode `600` and are gitignored.
+Variables already set in your shell override `.env`, for example `BACKUP_STOP_GITEA=0 make backup`.
+
+**Secrets.** `make bootstrap` generates three files in `secrets/` (directory 700, files 600, gitignored):
+
+| File | Used for |
+|---|---|
+| `postgres_password` | Database password, mounted read-only into both containers |
+| `gitea_secret_key` | Gitea's `SECRET_KEY`, which encrypts 2FA secrets and tokens |
+| `restic_password` | Encryption key for off-site backups. **Keep a copy off this machine** |
+
+Terraform only ever receives the path to `secrets/`, so the state file contains no passwords. Labs created before this change are migrated automatically: `make bootstrap` moves the values out of `.env` and keeps them unchanged.
 
 ---
 
@@ -123,4 +146,4 @@ Secrets (`POSTGRES_PASSWORD`, `GITEA_SECRET_KEY`, `GITEA_ADMIN_PASSWORD`) are ge
 
 ## License
 
-MIT
+[MIT](LICENSE)

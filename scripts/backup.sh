@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Back up the Gitea lab: PostgreSQL dump, Gitea data volume (repos,
-# attachments, app.ini, SSH host keys), .env and Terraform state.
+# attachments, app.ini, SSH host keys), .env, secrets/ and Terraform state.
 #
 #   BACKUP_DIR=backups        where backups go
 #   BACKUP_KEEP=7             how many backups to keep (0 = keep all)
 #   BACKUP_STOP_GITEA=1       (default) stop Gitea while backing up so the
 #                             database and repositories match exactly; costs
 #                             a few seconds of downtime. 0 = hot backup.
+#   RESTIC_REPOSITORY=...     also upload the backup off-site (scripts/offsite.sh)
+#   BACKUP_NOTIFY_URL=...     POST a message here if the backup fails (e.g. ntfy)
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -22,15 +24,20 @@ WORK_DIR="${OUT_DIR}.partial"
 GITEA="$(gitea_ctr)"
 DB="$(db_ctr)"
 
-container_running "$DB" || die "$DB is not running. Run: make up"
-
-mkdir -p "$WORK_DIR"
 stopped_gitea=0
 cleanup() {
+  local rc=$?
   [[ -d "$WORK_DIR" ]] && rm -rf "$WORK_DIR"
   if [[ "$stopped_gitea" == 1 ]]; then docker start "$GITEA" >/dev/null 2>&1 || true; fi
+  if [[ "$rc" -ne 0 && -n "${BACKUP_NOTIFY_URL:-}" ]]; then
+    curl -fsS -m 10 -d "Gitea lab backup FAILED on $(hostname) (exit $rc). See backups/backup.log" \
+      "$BACKUP_NOTIFY_URL" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
+
+container_running "$DB" || die "$DB is not running. Run: make up"
+mkdir -p "$WORK_DIR"
 
 banner "Gitea Lab Backup → $OUT_DIR"
 
@@ -58,6 +65,9 @@ fi
 
 cp "$ENV_FILE" "$WORK_DIR/env.backup"
 pass "env.backup"
+mkdir -p "$WORK_DIR/secrets"
+cp "$SECRETS_DIR"/* "$WORK_DIR/secrets/"
+pass "secrets/"
 if [[ -f terraform/terraform.tfstate ]]; then
   cp terraform/terraform.tfstate "$WORK_DIR/terraform.tfstate"
   pass "terraform.tfstate"
@@ -71,7 +81,8 @@ gitea_version=${GITEA_VERSION:-unknown}
 postgres_version=${POSTGRES_VERSION:-unknown}
 postgres_db=${POSTGRES_DB}
 EOF
-(cd "$WORK_DIR" && sha256sum -- * > SHA256SUMS)
+sums="$(cd "$WORK_DIR" && find . -type f -printf '%P\n' | sort | xargs -d '\n' sha256sum --)"
+printf '%s\n' "$sums" > "$WORK_DIR/SHA256SUMS"
 
 mv "$WORK_DIR" "$OUT_DIR"
 pass "Backup complete: $OUT_DIR"
@@ -83,4 +94,8 @@ if [[ "$BACKUP_KEEP" -gt 0 ]]; then
     rm -rf -- "$dir"
     info "Pruned old backup $(basename "$dir")"
   done
+fi
+
+if [[ -n "${RESTIC_REPOSITORY:-}" && "${BACKUP_OFFSITE:-1}" == 1 ]]; then
+  ./scripts/offsite.sh push "$OUT_DIR"
 fi

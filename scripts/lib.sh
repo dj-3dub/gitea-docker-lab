@@ -6,6 +6,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
 ENV_FILE="${ENV_FILE:-.env}"
+# Secrets live in files (mode 600), never in .env or Terraform state.
+SECRETS_DIR="${SECRETS_DIR:-secrets}"
+# shellcheck disable=SC2034  # used by the scripts that source this file
+SECRET_NAMES=(postgres_password gitea_secret_key restic_password)
 
 PASSED=0
 WARNINGS=0
@@ -40,14 +44,21 @@ summary() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Export every KEY=value from .env into the environment.
+# Export every KEY=value from .env into the environment. Variables already
+# set in the environment win (e.g. `BACKUP_STOP_GITEA=0 make backup`), the
+# same precedence Docker Compose uses.
 load_env() {
-  local file="${1:-$ENV_FILE}"
+  local file="${1:-$ENV_FILE}" name
   [[ -f "$file" ]] || return 1
+  local -A keep=()
+  while IFS= read -r name; do
+    [[ -n "${!name+x}" ]] && keep[$name]="${!name}"
+  done < <(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$file" | tr -d '=')
   set -a
   # shellcheck disable=SC1090
   source "$file"
   set +a
+  for name in "${!keep[@]}"; do export "$name=${keep[$name]}"; done
 }
 
 require_env() {
@@ -67,6 +78,8 @@ set_env_var() {
   chmod 600 "$tmp"
   mv "$tmp" "$file"
 }
+
+read_secret() { cat "$SECRETS_DIR/$1"; }
 
 # ---------- Lab resources (names must match terraform/main.tf) ----------
 lab_name()        { echo "${LAB_NAME:-gitea-lab}"; }

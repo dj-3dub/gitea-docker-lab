@@ -47,17 +47,19 @@ if [[ "${FORCE:-0}" != 1 ]]; then
   [[ "$answer" == restore ]] || die "Aborted"
 fi
 
-# Gitea encrypts some data (2FA, secrets) with SECRET_KEY; it must match.
-# Changing it in .env means Terraform must recreate the Gitea container.
-key_changed=0
-if [[ -f "$BACKUP/env.backup" ]]; then
+# Gitea encrypts some data (2FA secrets, tokens) with SECRET_KEY, so the
+# restored data needs the key it was written with. The database password is
+# left alone: the database is recreated inside the existing Postgres volume.
+old_key=""
+if [[ -s "$BACKUP/secrets/gitea_secret_key" ]]; then
+  old_key="$(cat "$BACKUP/secrets/gitea_secret_key")"
+elif [[ -f "$BACKUP/env.backup" ]]; then          # backups from before secrets/
   old_key="$(grep -E '^GITEA_SECRET_KEY=' "$BACKUP/env.backup" | cut -d= -f2- || true)"
-  if [[ -n "$old_key" && "$old_key" != "${GITEA_SECRET_KEY:-}" ]]; then
-    cp "$ENV_FILE" "${ENV_FILE}.pre-restore"
-    set_env_var GITEA_SECRET_KEY "$old_key"
-    key_changed=1
-    info "Adopted GITEA_SECRET_KEY from backup (previous .env saved as ${ENV_FILE}.pre-restore)"
-  fi
+fi
+if [[ -n "$old_key" && "$old_key" != "$(read_secret gitea_secret_key)" ]]; then
+  cp "$SECRETS_DIR/gitea_secret_key" "$SECRETS_DIR/gitea_secret_key.pre-restore"
+  (umask 077 && printf '%s' "$old_key" > "$SECRETS_DIR/gitea_secret_key")
+  info "Adopted Gitea SECRET_KEY from backup (previous key saved as $SECRETS_DIR/gitea_secret_key.pre-restore)"
 fi
 
 info "Stopping $GITEA"
@@ -76,12 +78,8 @@ with_gitea_volume rw sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   < "$BACKUP/gitea-data.tar.gz"
 pass "Data volume restored"
 
-if [[ "$key_changed" == 1 ]]; then
-  info "Applying new SECRET_KEY with Terraform"
-  ./scripts/tf.sh apply -auto-approve -input=false >/dev/null
-else
-  docker start "$GITEA" >/dev/null
-fi
+# Gitea reads the (possibly new) key from its mounted file at startup.
+docker start "$GITEA" >/dev/null
 wait_healthy "$GITEA"
 pass "Restore complete; $GITEA healthy"
 

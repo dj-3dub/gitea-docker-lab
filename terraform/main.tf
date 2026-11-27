@@ -3,6 +3,10 @@ locals {
     "lab.project" = var.lab_name
   }
   containers = var.running ? 1 : 0
+
+  # Read-only secret mounts (see variable "secrets_dir").
+  secret_db_password = "/run/secrets/postgres_password"
+  secret_gitea_key   = "/run/secrets/gitea_secret_key"
 }
 
 # ----------------------------------------------------------
@@ -68,12 +72,18 @@ resource "docker_container" "db" {
   env = [
     "POSTGRES_DB=${var.postgres_db}",
     "POSTGRES_USER=${var.postgres_user}",
-    "POSTGRES_PASSWORD=${var.postgres_password}",
+    "POSTGRES_PASSWORD_FILE=${local.secret_db_password}",
   ]
 
   volumes {
     volume_name    = docker_volume.db_data.name
     container_path = "/var/lib/postgresql/data"
+  }
+
+  volumes {
+    host_path      = "${var.secrets_dir}/postgres_password"
+    container_path = local.secret_db_password
+    read_only      = true
   }
 
   networks_advanced {
@@ -120,14 +130,14 @@ resource "docker_container" "gitea" {
     "GITEA__database__HOST=db:5432",
     "GITEA__database__NAME=${var.postgres_db}",
     "GITEA__database__USER=${var.postgres_user}",
-    "GITEA__database__PASSWD=${var.postgres_password}",
+    "GITEA__database__PASSWD__FILE=${local.secret_db_password}",
     "GITEA__server__DOMAIN=${var.gitea_domain}",
     "GITEA__server__ROOT_URL=${var.gitea_root_url}",
     "GITEA__server__SSH_DOMAIN=${var.gitea_ssh_domain}",
     "GITEA__server__SSH_PORT=${var.ssh_port}",
     "GITEA__server__SSH_LISTEN_PORT=22",
     "GITEA__security__INSTALL_LOCK=true",
-    "GITEA__security__SECRET_KEY=${var.gitea_secret_key}",
+    "GITEA__security__SECRET_KEY__FILE=${local.secret_gitea_key}",
     "GITEA__service__DISABLE_REGISTRATION=${var.disable_registration}",
     "GITEA__service__REQUIRE_SIGNIN_VIEW=${var.require_signin_view}",
     "GITEA__log__LEVEL=${var.log_level}",
@@ -148,6 +158,18 @@ resource "docker_container" "gitea" {
   volumes {
     volume_name    = docker_volume.gitea_data.name
     container_path = "/data"
+  }
+
+  volumes {
+    host_path      = "${var.secrets_dir}/postgres_password"
+    container_path = local.secret_db_password
+    read_only      = true
+  }
+
+  volumes {
+    host_path      = "${var.secrets_dir}/gitea_secret_key"
+    container_path = local.secret_gitea_key
+    read_only      = true
   }
 
   networks_advanced {

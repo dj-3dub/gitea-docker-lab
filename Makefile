@@ -24,13 +24,15 @@ DB       := $(LAB_NAME)-db
 SERVICE ?= gitea
 BACKUP  ?=
 FORCE   ?= 0
+SNAPSHOT ?= latest
 
 export ANSIBLE_CONFIG := $(CURDIR)/ansible/ansible.cfg
 ANSIBLE_ARGS ?=
 
 .PHONY: help install bootstrap validate lint build \
 	init plan up apply down restart status logs shell db-shell update nuke \
-	admin health diag smoke backup restore \
+	admin health diag check-updates smoke backup restore schedule unschedule \
+	offsite offsite-snapshots offsite-check offsite-restore \
 	tf-fmt tf-validate tf-output tf-state tf-version \
 	ansible-ping ansible-check ansible-deploy
 
@@ -39,7 +41,7 @@ ANSIBLE_ARGS ?=
 help: ## Show this help
 	@awk 'BEGIN { FS = ":.*## " } \
 		/^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } \
-		/^[a-zA-Z0-9_-]+:.*## / { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+		/^[a-zA-Z0-9_-]+:.*## / { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "Variables: TF_MODE=auto|local|docker  SERVICE=gitea|db  BACKUP=<dir|latest>  FORCE=1"
 
@@ -131,16 +133,39 @@ diag: ## Show tool versions and which Terraform runner is used
 		echo "Terraform runner: local $$(command -v terraform) (TF_MODE=$(TF_MODE))"; \
 	fi
 
+check-updates: ## Compare pinned image versions with the latest releases
+	./scripts/check-updates.sh
+
 smoke: ## DESTRUCTIVE end-to-end test: push, backup, delete, restore (needs FORCE=1)
 	FORCE="$(FORCE)" ./scripts/smoke-test.sh
 
 ##@ Backup
 
-backup: ## Back up database, repositories, .env and Terraform state
+backup: ## Back up database, repositories, .env, secrets and Terraform state (+ off-site if set)
 	./scripts/backup.sh
 
 restore: ## Restore: make restore BACKUP=backups/<stamp>|latest [FORCE=1]
 	BACKUP="$(BACKUP)" FORCE="$(FORCE)" ./scripts/restore.sh
+
+schedule: ## Run backups nightly via your crontab (BACKUP_SCHEDULE in .env)
+	./scripts/schedule.sh install
+
+unschedule: ## Remove the nightly backup from your crontab
+	./scripts/schedule.sh remove
+
+##@ Off-site (restic, encrypted; set RESTIC_REPOSITORY in .env)
+
+offsite: ## Upload the newest local backup off-site and apply retention
+	./scripts/offsite.sh push
+
+offsite-snapshots: ## List off-site snapshots
+	./scripts/offsite.sh snapshots
+
+offsite-check: ## Verify the off-site repository's integrity
+	./scripts/offsite.sh check
+
+offsite-restore: ## Download an off-site snapshot into backups/ (SNAPSHOT=latest)
+	./scripts/offsite.sh restore $(SNAPSHOT)
 
 ##@ Terraform extras
 

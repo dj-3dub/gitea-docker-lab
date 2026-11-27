@@ -43,13 +43,28 @@ Every resource has the label `lab.project=<LAB_NAME>`, which `make status` filte
 ## Configuration flow
 
 ```text
-.env.example ──make bootstrap──▶ .env (secrets generated, mode 600)
-                                   │
-                                   ├─▶ scripts/tf.sh ─▶ TF_VAR_* ─▶ terraform/variables.tf
-                                   └─▶ backup / restore / health / admin scripts
+.env.example ──make bootstrap──▶ .env       (settings, mode 600)
+                         └─────▶ secrets/   (postgres_password, gitea_secret_key, restic_password; 600)
+
+.env ─▶ scripts/tf.sh ─▶ TF_VAR_* ─▶ terraform/variables.tf
+secrets/ ──(path only: TF_VAR_secrets_dir)──▶ read-only bind mounts in the containers
 ```
 
-Each `.env` key maps to one Terraform variable. The full mapping is at the top of `scripts/tf.sh`. Terraform state contains the container environment, including the database password and secret key, so it is gitignored, kept at mode `600`, and included in every backup.
+Each `.env` key maps to one Terraform variable. The full mapping is at the top of `scripts/tf.sh`.
+
+### Secrets
+
+Secrets never pass through Terraform. The containers read them from read-only mounts at `/run/secrets/`:
+
+| Container | Setting | Source |
+|---|---|---|
+| `db` | `POSTGRES_PASSWORD_FILE` | `secrets/postgres_password` |
+| `gitea` | `GITEA__database__PASSWD__FILE` | `secrets/postgres_password` |
+| `gitea` | `GITEA__security__SECRET_KEY__FILE` | `secrets/gitea_secret_key` |
+
+So `terraform.tfstate` and `docker inspect` show only file paths. Gitea copies the values into its own `app.ini` inside the data volume at startup, as it always has, which is why backups of that volume are kept at mode 700.
+
+`SECRET_KEY_URI` would avoid even that copy, but Gitea refuses to start when an existing `app.ini` already has a `SECRET_KEY`. Every lab upgraded from the inline-secret version has one, so `__FILE` is used instead.
 
 ## Why Terraform and not Compose?
 

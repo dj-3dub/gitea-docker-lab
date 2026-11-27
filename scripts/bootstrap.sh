@@ -39,7 +39,33 @@ while IFS= read -r key; do
   info "generated $key"
   generated=$((generated + 1))
 done < <(grep -E '^[A-Z0-9_]+=__GENERATE__$' "$ENV_FILE" | cut -d= -f1)
-[[ "$generated" -gt 0 ]] || pass "no secrets left to generate"
+[[ "$generated" -gt 0 ]] || pass "no .env values left to generate"
+
+section "Secrets ($SECRETS_DIR/)"
+(umask 077 && mkdir -p "$SECRETS_DIR")
+chmod 700 "$SECRETS_DIR"
+for name in "${SECRET_NAMES[@]}"; do
+  file="$SECRETS_DIR/$name"
+  key="$(tr '[:lower:]' '[:upper:]' <<<"$name")"          # e.g. POSTGRES_PASSWORD
+  legacy="$(grep -E "^${key}=" "$ENV_FILE" | cut -d= -f2- || true)"
+  if [[ -s "$file" ]]; then
+    pass "$name exists"
+  elif [[ -n "$legacy" && "$legacy" != __GENERATE__ ]]; then
+    # Older .env files kept secrets inline: move them to a file.
+    (umask 077 && printf '%s' "$legacy" > "$file")
+    pass "$name moved from $ENV_FILE"
+  else
+    (umask 077 && openssl rand -hex 24 | tr -d '\n' > "$file")
+    pass "$name generated"
+  fi
+  chmod 600 "$file"
+  if grep -qE "^${key}=" "$ENV_FILE"; then
+    tmp="$(mktemp "${ENV_FILE}.XXXXXX")"
+    grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true
+    chmod 600 "$tmp" && mv "$tmp" "$ENV_FILE"
+    info "removed $key from $ENV_FILE"
+  fi
+done
 
 # Match the data volume owner to the current user on first run.
 if grep -qE '^USER_UID=1000$' "$ENV_FILE" && [[ "$(id -u)" != 1000 ]]; then
@@ -56,7 +82,7 @@ echo ""
 if summary; then
   echo ""
   echo "Next steps:"
-  echo "  1. Review .env (ports, domain, admin e-mail)"
+  echo "  1. Review .env (ports, domain, admin e-mail); secrets are in $SECRETS_DIR/"
   echo "  2. make build      # validate → terraform apply → admin → health"
 else
   exit 1

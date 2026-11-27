@@ -11,10 +11,10 @@ missing_tool() { if [[ "$STRICT" == 1 ]]; then fail "$1"; else warn "$1"; fi; }
 banner "Gitea Lab Validation"
 
 section "Project files"
-for f in README.md Makefile VERSION .env.example .gitignore .yamllint \
+for f in README.md LICENSE Makefile VERSION .env.example .gitignore .yamllint \
   scripts/lib.sh scripts/install.sh scripts/bootstrap.sh scripts/validate.sh \
   scripts/healthcheck.sh scripts/backup.sh scripts/restore.sh scripts/tf.sh \
-  scripts/create-admin.sh scripts/smoke-test.sh \
+  scripts/create-admin.sh scripts/smoke-test.sh scripts/offsite.sh scripts/schedule.sh scripts/check-updates.sh \
   ansible/ansible.cfg ansible/inventory/hosts.ini ansible/playbooks/deploy.yml \
   ansible/roles/project_host/tasks/main.yml \
   terraform/versions.tf terraform/main.tf terraform/variables.tf \
@@ -33,8 +33,21 @@ if [[ -f "$ENV_FILE" ]]; then
   else
     pass "secrets generated"
   fi
-  for key in POSTGRES_PASSWORD GITEA_SECRET_KEY GITEA_ADMIN_USER GITEA_ADMIN_PASSWORD; do
+  for key in GITEA_ADMIN_USER GITEA_ADMIN_PASSWORD; do
     if grep -qE "^${key}=.+" "$ENV_FILE"; then pass "$key set"; else fail "$key empty"; fi
+  done
+  for key in POSTGRES_PASSWORD GITEA_SECRET_KEY; do
+    if grep -qE "^${key}=" "$ENV_FILE"; then fail "$key is still in $ENV_FILE (run: make bootstrap to move it to $SECRETS_DIR/)"; fi
+  done
+  for name in "${SECRET_NAMES[@]}"; do
+    f="$SECRETS_DIR/$name"
+    if [[ ! -s "$f" ]]; then
+      fail "$f missing (run: make bootstrap)"
+    elif [[ "$(stat -c %a "$f")" != 600 ]]; then
+      warn "$f permissions $(stat -c %a "$f") (expected 600)"
+    else
+      pass "$f"
+    fi
   done
 else
   warn "$ENV_FILE missing (run: make bootstrap)"
